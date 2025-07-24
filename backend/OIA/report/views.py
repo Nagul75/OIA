@@ -1,5 +1,6 @@
 import pandas as pd
-
+import json
+from collections import defaultdict
 import numpy as np
 from io import BytesIO
 from rest_framework.decorators import api_view, permission_classes
@@ -8,7 +9,51 @@ from rest_framework.response import Response
 from rest_framework import status
 from .models import Company
 from .serializer import CompanySerializer
+import copy
+import warnings
 
+# --- Calculation Utilities ---
+
+def parse_cmmi_rating(rating_str):
+    try:
+        return float(rating_str.split(" - ")[0])
+    except (ValueError, AttributeError, IndexError, TypeError):
+        return None
+
+def calculate_and_append_final_summary(data):
+    output_data = copy.deepcopy(data)
+
+    for company, records in output_data.items():
+        if not isinstance(records, list):
+            continue
+
+        subdomain_ratings = defaultdict(list)
+
+        for record in records:
+            subdomain = record.get("Sub Domain")
+            rating = parse_cmmi_rating(record.get("CMMI Tier Observed Rating"))
+            if subdomain and rating is not None:
+                subdomain_ratings[subdomain].append(rating)
+
+        subdomain_averages = {
+            sd: round(sum(vals) / len(vals), 2)
+            for sd, vals in subdomain_ratings.items()
+        }
+
+        overall_domain_score = round(
+            sum(subdomain_averages.values()) / len(subdomain_averages), 2
+        ) if subdomain_averages else None
+
+        final_summary = {
+            "final_calculation": {
+                "subdomain_averages": subdomain_averages,
+                "overall_domain_score": overall_domain_score
+            }
+        }
+
+        records.append(final_summary)
+
+    return output_data
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -71,18 +116,22 @@ def company_excel_to_json(request):
         try:
             excel_io = BytesIO(company.output_excel)
 
-            # Optional: confirm available sheets
-            # xls = pd.ExcelFile(excel_io)
-            # print("Sheets available:", xls.sheet_names)
+            # Suppress openpyxl warnings if desired
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                df = pd.read_excel(excel_io, sheet_name=0)
 
-            df = pd.read_excel(excel_io, sheet_name=0)  # adjust if needed
-            df = df.replace({np.nan: None})  # Ensure JSON compatibility
-            df = df.dropna(how='all')        # Remove empty rows
+            df = df.replace({np.nan: None})
+            df = df.dropna(how='all')
 
             json_data = df.to_dict(orient='records')
             result[company.company_name] = json_data
         except Exception as e:
             result[company.company_name] = {'error': f'Failed to parse Excel file: {str(e)}'}
 
+    # ✅ Perform calculations and append results
+    print("CALCULATING CMMI SCORES")
+    final_result = calculate_and_append_final_summary(result)
+
     print("RETURNING JSON EXCEL RESPONSE")
-    return Response(result, status=status.HTTP_200_OK)
+    return Response(final_result, status=status.HTTP_200_OK)
