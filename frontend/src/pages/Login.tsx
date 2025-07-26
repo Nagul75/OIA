@@ -15,15 +15,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-import {
-    Card,
-    CardContent,
-    CardHeader,
-    CardTitle,
-    CardDescription,
-    CardFooter,
-} from "@/components/ui/card";
-
 const Login = () => {
     const form = useForm<loginFields>({
         resolver: zodResolver(loginSchema),
